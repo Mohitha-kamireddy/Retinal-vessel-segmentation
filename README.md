@@ -1,58 +1,58 @@
 # Retinal Vessel Segmentation (DRIVE Dataset)
 
-A U-Net implemented in PyTorch for retinal blood vessel segmentation, trained and evaluated on the DRIVE dataset.
+A U-Net implemented in PyTorch for retinal blood vessel segmentation, trained and evaluated on the [DRIVE](https://drive.grand-challenge.org/) dataset.
 
 ## Overview
 
-- **Architecture:** standard U-Net (encoder-decoder with skip connections), single-channel binary output
-- **Dataset:** DRIVE (Digital Retinal Images for Vessel Extraction), 20 training images, split 80/20 into train/validation
-- **Loss:** BCE + Dice
-- **Optimizer:** Adam
-- **Augmentation:** horizontal/vertical flip, 90° rotation, affine (shift/scale/rotate), brightness/contrast jitter (via Albumentations)
-- **Training:** 200 epochs, batch size 4, learning rate 1e-4
+- **Task:** binary semantic segmentation. For each pixel of a retinal fundus photo, predict vessel or background.
+- **Architecture:** standard U-Net with 4 encoder levels (64 → 128 → 256 → 512 channels), a 1024-channel bottleneck, and a symmetric decoder. Each level uses two 3×3 convolutions with BatchNorm and ReLU. The decoder uses transposed-convolution upsampling and concatenated skip connections. About 31 million parameters.
+- **Input:** raw RGB image (3 channels) scaled to [0, 1], at the original DRIVE resolution of 584×565.
+- **Output:** a single-channel logit map. Sigmoid is applied in the loss and at inference time.
+- **Dataset:** DRIVE, 20 training images, split 80/20 (seeded) into 16 train / 4 validation.
+- **Loss:** BCE (with logits) + soft Dice loss.
+- **Optimizer:** Adam, learning rate 1e-4, batch size 4.
+- **Augmentation (training only):** horizontal/vertical flip, 90° rotation, affine (shift up to 5%, scale 0.9–1.1, rotate ±15°), brightness/contrast jitter, via Albumentations. Geometric transforms are applied identically to the image, vessel mask and FOV mask.
+- **Training:** run with `--epochs 200` (the script default is 50). The checkpoint with the best validation Dice is saved as `best_model.pth`.
 
 ## Results
 
-Evaluated on a held-out validation split (4 images) from the DRIVE training set, with metrics restricted to the field-of-view (FOV) mask:
+Evaluated on the held-out validation split (4 images from the DRIVE training set) using the best checkpoint, with a threshold of 0.5. Metrics are computed from pooled pixel counts over all validation images, **restricted to the field-of-view (FOV) mask**, so the black background outside the retina is not counted.
 
 | Metric    | Value  |
-|-----------|--------|
-| Accuracy  | 0.9272 |
-| Precision | 0.6505 |
-| Recall    | 0.8312 |
-| Dice      | 0.7298 |
-| IoU       | 0.5746 |
+| --------- | ------ |
+| Accuracy  | 0.9390 |
+| Precision | 0.7287 |
+| Recall    | 0.7713 |
+| Dice      | 0.7494 |
+| IoU       | 0.5992 |
 
-Sample prediction (Retinal Image | Ground Truth | Prediction):
+These values are written by `src/evaluate.py` to `outputs/metrics.csv`.
 
-![Sample prediction](outputs/predictions/prediction_0.png)
+**How to read them:**
 
-The model captures the overall vascular structure well, including major vessels and branching patterns. Recall is notably higher than precision, indicating the model tends to over-predict vessel pixels (visible as speckle noise in the prediction masks) rather than missing them.
+- Accuracy is inflated by class imbalance. Vessels make up only about 10–12% of retinal pixels, so Dice and IoU are the more informative numbers.
+- Precision and recall are fairly balanced (0.73 / 0.77), so the model neither strongly over-predicts nor under-predicts vessel pixels.
+- Dice and IoU are consistent with the precision and recall above (Dice = 2PR / (P + R), IoU = Dice / (2 − Dice)).
 
 ## Project Structure
 
 ```
 retinal-vessel-segmentation/
 ├── data/
-│   ├── raw/DRIVE/        # DRIVE dataset (training/test, images/masks/FOV)
-│   └── processed/        # Preprocessed data
+│   └── raw/DRIVE/             # DRIVE dataset (not tracked in git)
 ├── src/
-│   ├── dataset.py             # PyTorch Dataset for DRIVE
-│   ├── preprocessing.py       # Green-channel extraction, CLAHE, normalization, resizing
-│   ├── transforms.py          # Albumentations augmentation pipelines
-│   ├── model.py                # U-Net architecture
-│   ├── train.py                 # Training loop with checkpointing
-│   ├── evaluate.py              # Accuracy / Precision / Recall / Dice / IoU (FOV-masked)
-│   └── visualize_predictions.py # Saves side-by-side prediction images
+│   ├── dataset.py             # PyTorch Dataset for DRIVE (image, vessel mask, FOV mask)
+│   ├── transforms.py          # Albumentations train / validation pipelines
+│   ├── model.py               # U-Net architecture
+│   ├── train.py               # Training loop, BCE + Dice loss, best-checkpoint saving
+│   ├── evaluate.py            # Accuracy / Precision / Recall / Dice / IoU (FOV-masked)
+│   └── visualize_predictions.py  # Saves image | ground truth | prediction figures
 ├── outputs/
-│   ├── checkpoints/      # Saved model weights (best_model.pth)
-│   ├── predictions/      # Prediction visualizations
-│   ├── plots/            # Training curves, metric plots
-│   └── metrics.csv       # Evaluation metrics
-├── notebooks/
+│   ├── checkpoints/           # best_model.pth (not tracked in git)
+│   ├── predictions/           # generated by visualize_predictions.py (not tracked)
+│   └── metrics.csv            # evaluation metrics
 ├── requirements.txt
-├── README.md
-└── .gitignore
+└── README.md
 ```
 
 ## Setup
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 
 ## Dataset
 
-Place the DRIVE dataset under `data/raw/DRIVE/`, matching this structure:
+Download DRIVE and place it under `data/raw/DRIVE/` with this structure:
 
 ```
 data/raw/DRIVE/
@@ -76,24 +76,54 @@ data/raw/DRIVE/
     └── mask/
 ```
 
+Only the `training/` folder is used by the current code.
+
 ## Usage
 
 Train:
+
 ```bash
 python3 src/train.py --epochs 200 --batch-size 4 --lr 1e-4
 ```
 
-Evaluate on the held-out validation split:
+Evaluate on the held-out validation split (reads `outputs/checkpoints/best_model.pth`, writes `outputs/metrics.csv`):
+
 ```bash
 python3 src/evaluate.py
 ```
 
-Visualize predictions:
+Visualize predictions (saves side-by-side figures to `outputs/predictions/`):
+
 ```bash
 python3 src/visualize_predictions.py
 ```
 
-## Notes
+The train/validation split is controlled by `--seed` (default 42) and `--val-split` (default 0.2). `evaluate.py` and `visualize_predictions.py` use the same defaults, so they reproduce the exact same 4 validation images used during training.
 
-- The official DRIVE test set ground-truth masks were not consistently available across mirrors, so evaluation uses a held-out validation split from the training set instead.
-- Metrics are computed only within the FOV mask, excluding background outside the retina.
+## Implementation Notes
+
+- **Split without leakage:** two dataset objects are built over the same files, one with augmentation and one without. Disjoint seeded index lists give the training set augmented images and the validation set clean, unseen images.
+- **Numerical stability:** the model outputs raw logits and the loss uses `BCEWithLogitsLoss`, which fuses sigmoid and BCE.
+- **Odd image sizes:** DRIVE images are 584×565, so max-pooling floors the spatial size at some levels. The decoder interpolates the upsampled feature map to match the skip connection when sizes differ by a pixel.
+- **Metrics:** pooled TP / TN / FP / FN counts over all validation pixels inside the FOV, not an average of per-image scores.
+
+## Limitations
+
+- **Small validation set.** Results come from only 4 images, so they are noisy and sensitive to which images fall in the split.
+- **Checkpoint selection and reporting share the same images.** The best checkpoint is chosen by validation Dice on the same 4 images that are then reported, so the numbers are slightly optimistic. A separate test set or cross-validation would give an unbiased estimate.
+- **Not comparable to published DRIVE benchmarks.** The official DRIVE test set ground truth was not consistently available across mirrors, so evaluation uses a split of the training set. Published results on the official test set typically report higher Dice.
+- **Raw RGB input.** No specialized retinal preprocessing (green-channel extraction, CLAHE) is applied. The model learns directly from the RGB image scaled to [0, 1].
+- **Loss includes pixels outside the FOV.** Evaluation excludes them, training does not.
+- **Fixed threshold.** A threshold of 0.5 is used, with no tuning and no post-processing such as removing small connected components.
+- **Not fully reproducible.** Only the train/validation split is seeded. Weight initialization and augmentation randomness are not, so reruns will differ slightly.
+- **No saved training curves.** Loss and Dice per epoch are printed to the terminal during training but not saved to a file.
+
+## Future Work
+
+- Add green-channel + CLAHE preprocessing (1-channel input) and compare against the RGB baseline.
+- Mask the training loss with the FOV.
+- Tune the decision threshold and add small-component removal.
+- Use k-fold cross-validation and a separate held-out test set.
+- Log training curves and seed all sources of randomness.
+- Try patch-based training, Attention U-Net or residual variants, and a Tversky or focal loss.
+- Evaluate generalization on other datasets (STARE, CHASE_DB1).
