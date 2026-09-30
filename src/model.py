@@ -21,19 +21,7 @@ class DoubleConv(nn.Module):
 
 
 class UNet(nn.Module):
-    # Standard U-Net for binary segmentation.
-    #
-    # Encoder: repeatedly applies DoubleConv then downsamples with max pooling,
-    # doubling the number of channels at each stage while halving spatial size.
-    #
-    # Bottleneck: DoubleConv at the lowest resolution, connecting encoder and decoder.
-    #
-    # Decoder: repeatedly upsamples, concatenates the matching encoder feature map
-    # (skip connection) and applies DoubleConv, halving channels while doubling
-    # spatial size back to the input resolution.
-    #
-    # Output head: 1x1 convolution producing a single-channel logit map for
-    # binary vessel segmentation (apply sigmoid outside the model, e.g. in the loss).
+
     def __init__(self, in_channels=3, out_channels=1, features=(64, 128, 256, 512)):
         super().__init__()
 
